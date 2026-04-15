@@ -21,13 +21,7 @@ if "%SUPABASE_ANON_KEY%"=="" (
   exit /b 1
 )
 
-flutter pub get
-if errorlevel 1 (
-  echo Echec de flutter pub get.
-  pause
-  exit /b 1
-)
-
+echo Starting FamilyCare on Microsoft Edge...
 flutter run -d edge --web-port 3000 --dart-define=SUPABASE_URL=%SUPABASE_URL% --dart-define=SUPABASE_ANON_KEY=%SUPABASE_ANON_KEY%
 
 endlocal

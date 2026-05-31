@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/healthsync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_bottom_nav.dart';
 import '../medication/add_medication_screen.dart';
@@ -46,6 +48,9 @@ class _MemberProfileScreenState extends State<MemberProfileScreen> {
   String? _creatorEmail;
   bool _loadingMedications = true;
   List<_MemberMedicationPlan> _medicationPlans = const [];
+  final _healthsync = HealthsyncService(Supabase.instance.client);
+  HealthsyncPatientSummary? _linkedPatient;
+  bool _loadingPatient = true;
 
   @override
   void initState() {
@@ -60,7 +65,116 @@ class _MemberProfileScreenState extends State<MemberProfileScreen> {
     final user = Supabase.instance.client.auth.currentUser;
     _creatorEmail = user?.email;
     _isCreator = user != null && widget.userId == user.id;
+    _loadLinkedPatient();
     _loadMemberMedications();
+  }
+
+  Future<void> _loadLinkedPatient() async {
+    try {
+      final patient = await _healthsync.getLinkedPatientForFamilyMember(widget.memberId);
+      if (!mounted) return;
+      setState(() {
+        _linkedPatient = patient;
+        _loadingPatient = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingPatient = false);
+    }
+  }
+
+  Future<void> _showBarcodeModal() async {
+    final patient = _linkedPatient;
+    if (patient == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Aucun patient lie a ce membre.')),
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Code 2D patient',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  patient.fullName,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE1DCE8)),
+                  ),
+                  child: Column(
+                    children: [
+                      SizedBox(
+                        width: 220,
+                        height: 220,
+                        child: _PatientCode2D(value: patient.barcodeValue ?? patient.id),
+                      ),
+                      const SizedBox(height: 8),
+                      SelectableText(
+                        patient.barcodeValue ?? patient.id,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _BarcodeMetaRow(
+                  label: 'Code patient',
+                  value: patient.patientCode ?? '-',
+                ),
+                _BarcodeMetaRow(
+                  label: 'CIN',
+                  value: patient.cin ?? '-',
+                ),
+                _BarcodeMetaRow(
+                  label: 'Barcode',
+                  value: patient.barcodeValue ?? '-',
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _loadMemberMedications() async {
@@ -403,23 +517,44 @@ class _MemberProfileScreenState extends State<MemberProfileScreen> {
                           children: [
                             _InfoSection(
                               title: 'Informations de base',
-                              child: Row(
+                              child: Column(
                                 children: [
-                                  _InfoTile(
-                                    label: 'Sang',
-                                    value: _bloodType?.isNotEmpty == true
-                                        ? _bloodType!
-                                        : '..',
+                                  Row(
+                                    children: [
+                                      _InfoTile(
+                                        label: 'Sang',
+                                        value: _bloodType?.isNotEmpty == true
+                                            ? _bloodType!
+                                            : '..',
+                                      ),
+                                      _InfoTile(
+                                        label: 'Age',
+                                        value: _ageLabel(_birthDate),
+                                      ),
+                                      _InfoTile(
+                                        label: 'Poids',
+                                        value: _weightKg != null
+                                            ? '${_weightKg!.toStringAsFixed(0)} kg'
+                                            : '..',
+                                      ),
+                                    ],
                                   ),
-                                  _InfoTile(
-                                    label: 'Age',
-                                    value: _ageLabel(_birthDate),
-                                  ),
-                                  _InfoTile(
-                                    label: 'Poids',
-                                    value: _weightKg != null
-                                        ? '${_weightKg!.toStringAsFixed(0)} kg'
-                                        : '..',
+                                  const SizedBox(height: 16),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _loadingPatient ? null : _showBarcodeModal,
+                                      icon: _loadingPatient
+                                          ? const SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(Icons.qr_code_2),
+                                      label: const Text('Afficher le code 2D'),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -655,6 +790,76 @@ class _InfoTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _BarcodeMetaRow extends StatelessWidget {
+  const _BarcodeMetaRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PatientCode2D extends StatelessWidget {
+  const _PatientCode2D({required this.value});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: QrImageView(
+          data: value,
+          version: QrVersions.auto,
+          eyeStyle: const QrEyeStyle(
+            eyeShape: QrEyeShape.square,
+            color: Color(0xFF140D1B),
+          ),
+          dataModuleStyle: const QrDataModuleStyle(
+            dataModuleShape: QrDataModuleShape.square,
+            color: Color(0xFF140D1B),
+          ),
+          backgroundColor: Colors.white,
+          gapless: true,
+        ),
       ),
     );
   }

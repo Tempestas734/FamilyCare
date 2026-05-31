@@ -1,3 +1,8 @@
+-- Legacy reference script.
+-- Superseded for the current app by:
+-- - family_member_patient_link_fixes.sql
+-- - family_medication_alignment_fixes.sql
+
 -- Per-dose tracking for medication plans
 -- One row = one planned intake (date + time) for one member
 

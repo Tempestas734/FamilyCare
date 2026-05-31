@@ -7,6 +7,9 @@ drop index if exists public.medecin_etablissements_unique_medecin_etablissement;
 drop trigger if exists trg_check_appointment_against_indisponibilites
 on public.appointments;
 
+drop trigger if exists trg_audit_appointments
+on public.appointments;
+
 alter table public.family_medecins enable row level security;
 alter table public.medecins enable row level security;
 alter table public.users enable row level security;

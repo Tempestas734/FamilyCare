@@ -62,6 +62,7 @@ class HealthsyncPatientSummary {
     this.phone,
     this.email,
     this.bloodGroup,
+    this.cin,
     this.patientCode,
     this.barcodeValue,
   });
@@ -74,6 +75,7 @@ class HealthsyncPatientSummary {
   final String? phone;
   final String? email;
   final String? bloodGroup;
+  final String? cin;
   final String? patientCode;
   final String? barcodeValue;
 
@@ -94,6 +96,7 @@ class HealthsyncPatientSummary {
       phone: _asText(map['phone']),
       email: _asText(map['email']),
       bloodGroup: _asText(map['blood_group']),
+      cin: _asText(map['cin']),
       patientCode: _asText(map['patient_code']),
       barcodeValue: _asText(map['barcode_value']),
     );
@@ -551,15 +554,105 @@ class HealthsyncService {
         .toList();
   }
 
+  Future<HealthsyncPatientSummary?> getLinkedPatientForFamilyMember(
+    String familyMemberId,
+  ) async {
+    final link = await client
+        .from('family_patients')
+        .select('patient_id')
+        .eq('family_member_id', familyMemberId)
+        .limit(1)
+        .maybeSingle();
+    final patientId = _asText(link?['patient_id']);
+    if (patientId != null) {
+      return findExistingPatient(patientId: patientId);
+    }
+
+    final member = await client
+        .from('family_members')
+        .select('id, family_id, full_name, birth_date')
+        .eq('id', familyMemberId)
+        .maybeSingle();
+    if (member == null) return null;
+
+    final familyId = _asText(member['family_id']);
+    final fullName = _asText(member['full_name']);
+    if (familyId == null || fullName == null) return null;
+
+    final expectedName = _normalizedName(fullName);
+    final expectedBirthDate = _dateOnlyValue(_asText(member['birth_date']));
+    final rows = await client
+        .from('family_patients')
+        .select('''
+          id,
+          family_member_id,
+          patient_id,
+          patients!inner(
+            id,
+            first_name,
+            last_name,
+            date_of_birth,
+            gender,
+            phone,
+            email,
+            blood_group,
+            cin,
+            patient_code,
+            barcode_value
+          )
+        ''')
+        .eq('family_id', familyId);
+
+    Map<String, dynamic>? matchedLink;
+    Map<String, dynamic>? matchedPatient;
+    for (final raw in rows as List<dynamic>) {
+      final row = _extractMap(raw);
+      final patient = _extractMap(row?['patients']);
+      if (row == null || patient == null) continue;
+      final patientFullName = _normalizedName(
+        '${_asText(patient['first_name']) ?? ''} ${_asText(patient['last_name']) ?? ''}',
+      );
+      if (patientFullName != expectedName) continue;
+
+      final patientBirthDate = _dateOnlyValue(_asText(patient['date_of_birth']));
+      if (expectedBirthDate != null &&
+          patientBirthDate != null &&
+          expectedBirthDate != patientBirthDate) {
+        continue;
+      }
+
+      matchedLink = row;
+      matchedPatient = patient;
+      break;
+    }
+
+    if (matchedLink == null || matchedPatient == null) {
+      return null;
+    }
+
+    final linkedMemberId = _asText(matchedLink['family_member_id']);
+    if (linkedMemberId == null || linkedMemberId.isEmpty) {
+      await client
+          .from('family_patients')
+          .update({'family_member_id': familyMemberId})
+          .eq('id', matchedLink['id']);
+    }
+
+    return HealthsyncPatientSummary.fromMap(matchedPatient);
+  }
+
   Future<HealthsyncPatientSummary?> findExistingPatient({
     String? patientId,
+    String? patientCode,
     String? cin,
     String? barcodeValue,
   }) async {
     final normalizedPatientId = _asText(patientId);
+    final normalizedPatientCode = _normalizeIdentifier(patientCode);
     final normalizedCin = _normalizePatientCode(cin);
     final normalizedBarcode = _asText(barcodeValue);
     if (normalizedPatientId == null &&
+        normalizedPatientCode == null &&
         normalizedCin == null &&
         normalizedBarcode == null) {
       return null;
@@ -574,15 +667,21 @@ class HealthsyncService {
       phone,
       email,
       blood_group,
+      cin,
       patient_code,
       barcode_value
     ''');
 
-    final result = normalizedPatientId != null
-        ? await query.eq('id', normalizedPatientId).maybeSingle()
-        : normalizedCin != null
-            ? await query.eq('patient_code', normalizedCin).maybeSingle()
-            : await query.eq('barcode_value', normalizedBarcode!).maybeSingle();
+    dynamic result;
+    if (normalizedPatientId != null) {
+      result = await query.eq('id', normalizedPatientId).maybeSingle();
+    } else if (normalizedPatientCode != null) {
+      result = await query.eq('patient_code', normalizedPatientCode).maybeSingle();
+    } else if (normalizedCin != null) {
+      result = await query.eq('cin', normalizedCin).maybeSingle();
+    } else {
+      result = await query.eq('barcode_value', normalizedBarcode!).maybeSingle();
+    }
 
     if (result == null) {
       return null;
@@ -636,7 +735,7 @@ class HealthsyncService {
           'phone': _asText(phone),
           'email': _asText(email),
           'blood_group': _asText(bloodGroup),
-          'patient_code': _normalizePatientCode(cin),
+          'cin': _normalizePatientCode(cin),
         })
         .select('''
           id,
@@ -647,6 +746,7 @@ class HealthsyncService {
           phone,
           email,
           blood_group,
+          cin,
           patient_code,
           barcode_value
         ''')
@@ -754,15 +854,6 @@ class HealthsyncService {
     double? weightKg,
     String? cin,
   }) async {
-    final familyMemberId = await createFamilyMember(
-      familyId: familyId,
-      fullName: fullName,
-      relationshipRole: relationshipRole,
-      birthDate: birthDate,
-      bloodType: bloodType,
-      weightKg: weightKg,
-    );
-
     try {
       final patient = await createPatientFromFamilyMember(
         fullName: fullName,
@@ -778,6 +869,15 @@ class HealthsyncService {
       if (patientId == null) {
         throw StateError('Patient cree sans identifiant');
       }
+
+      final familyMemberId = await createFamilyMember(
+        familyId: familyId,
+        fullName: fullName,
+        relationshipRole: relationshipRole,
+        birthDate: birthDate,
+        bloodType: bloodType,
+        weightKg: weightKg,
+      );
 
       await linkPatientToFamilyMember(
         familyId: familyId,
@@ -1442,6 +1542,25 @@ bool _looksLikePatientCodeConflict(PostgrestException error) {
   final details = '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
       .toLowerCase();
   return details.contains('patient_code') ||
+      details.contains('cin') ||
       details.contains('patients_patient_code') ||
       details.contains('duplicate key');
+}
+
+String? _normalizeIdentifier(String? value) {
+  final text = _asText(value);
+  return text?.toUpperCase();
+}
+
+String _normalizedName(String value) {
+  return value
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'\s+'), ' ');
+}
+
+String? _dateOnlyValue(String? value) {
+  final parsed = _parseDateOnly(value);
+  if (parsed == null) return null;
+  return _dateOnlyString(parsed);
 }

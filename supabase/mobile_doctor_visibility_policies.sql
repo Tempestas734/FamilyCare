@@ -1,3 +1,8 @@
+-- Legacy reference script.
+-- Superseded for the current app by:
+-- - family_member_patient_link_fixes.sql
+-- - family_doctor_appointment_fixes.sql
+
 alter table public.medecins enable row level security;
 alter table public.users enable row level security;
 alter table public.etablissements enable row level security;

@@ -24,6 +24,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   final _healthsync = HealthsyncService(Supabase.instance.client);
 
   final _existingPatientCodeController = TextEditingController();
+  final _existingCinController = TextEditingController();
   final _existingBarcodeController = TextEditingController();
   final _existingWeightController = TextEditingController();
 
@@ -47,6 +48,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   @override
   void dispose() {
     _existingPatientCodeController.dispose();
+    _existingCinController.dispose();
     _existingBarcodeController.dispose();
     _existingWeightController.dispose();
     _newFullNameController.dispose();
@@ -64,8 +66,9 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
       return;
     }
     if (_existingPatientCodeController.text.trim().isEmpty &&
+        _existingCinController.text.trim().isEmpty &&
         _existingBarcodeController.text.trim().isEmpty) {
-      _showMessage('Renseignez un patient code ou un barcode.');
+      _showMessage('Renseignez un code patient, un CIN ou un barcode.');
       return;
     }
 
@@ -76,7 +79,8 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
 
     try {
       final patient = await _healthsync.findExistingPatient(
-        cin: _existingPatientCodeController.text,
+        patientCode: _existingPatientCodeController.text,
+        cin: _existingCinController.text,
         barcodeValue: _existingBarcodeController.text,
       );
       if (!mounted) return;
@@ -165,7 +169,9 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
           if ((_asText(patient['barcode_value']) ?? '').isNotEmpty)
             'Barcode genere: ${patient['barcode_value']}',
           if ((_asText(patient['patient_code']) ?? '').isNotEmpty)
-            'CIN: ${patient['patient_code']}',
+            'Code patient: ${patient['patient_code']}',
+          if ((_asText(patient['cin']) ?? '').isNotEmpty)
+            'CIN: ${patient['cin']}',
         ],
       );
     } on StateError catch (error) {
@@ -295,7 +301,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
           _HintCard(
             title: 'Patient deja existant',
             body:
-                'Recherchez un patient global par patient code ou barcode. Le nom et la date de naissance seront repris depuis la base.',
+                'Recherchez un patient global par code patient, CIN ou barcode. Le nom et la date de naissance seront repris depuis la base.',
           ),
           const SizedBox(height: 16),
           _RoleSelector(
@@ -308,7 +314,17 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
             child: TextFormField(
               controller: _existingPatientCodeController,
               decoration: const InputDecoration(
-                hintText: 'code patient / CIN si utilise comme patient_code',
+                hintText: 'identifiant patient interne',
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _InputField(
+            label: 'CIN',
+            child: TextFormField(
+              controller: _existingCinController,
+              decoration: const InputDecoration(
+                hintText: 'carte nationale',
               ),
             ),
           ),
@@ -602,7 +618,8 @@ class _PatientFoundCard extends StatelessWidget {
             style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          _MetaLine(label: 'CIN', value: patient.patientCode ?? '-'),
+          _MetaLine(label: 'Code patient', value: patient.patientCode ?? '-'),
+          _MetaLine(label: 'CIN', value: patient.cin ?? '-'),
           _MetaLine(label: 'Barcode', value: patient.barcodeValue ?? '-'),
           _MetaLine(label: 'Naissance', value: patient.dateOfBirth ?? '-'),
           _MetaLine(label: 'Telephone', value: patient.phone ?? '-'),

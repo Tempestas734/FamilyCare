@@ -1,3 +1,8 @@
+-- Canonical migration for family/member/patient access and patient identifiers.
+-- Current rule:
+-- - patient_code = internal patient/member identifier
+-- - cin = national ID, optional (can be null for minors)
+
 create extension if not exists pgcrypto;
 
 create or replace function public.set_updated_at()
@@ -30,9 +35,20 @@ as $$
 begin
   if new.patient_code is not null then
     new.patient_code := upper(trim(new.patient_code));
-
     if new.patient_code = '' then
       new.patient_code := null;
+    end if;
+  end if;
+
+  if new.patient_code is null then
+    new.patient_code := 'PT-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10));
+  end if;
+
+  if new.cin is not null then
+    new.cin := upper(trim(new.cin));
+
+    if new.cin = '' then
+      new.cin := null;
     end if;
   end if;
 
@@ -46,6 +62,7 @@ $$;
 
 drop trigger if exists trg_patients_defaults on public.patients;
 drop trigger if exists trg_patients_set_defaults on public.patients;
+drop trigger if exists trg_audit_patients on public.patients;
 
 create trigger trg_patients_defaults
 before insert or update on public.patients

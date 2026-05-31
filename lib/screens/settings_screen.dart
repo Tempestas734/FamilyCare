@@ -5,7 +5,6 @@ import '../theme/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
 import 'home_screen.dart';
 import 'calendar/calendar_screen.dart';
-import 'welcome_screen.dart';
 import 'family/family_screen.dart';
 import 'doctors/doctor_list_screen.dart';
 import 'medication/medication_planning_screen.dart';
@@ -176,12 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 if (shouldSignOut == true) {
                                   await Supabase.instance.client.auth.signOut();
                                   if (!context.mounted) return;
-                                  Navigator.of(context).pushAndRemoveUntil(
-                                    MaterialPageRoute(
-                                      builder: (_) => const WelcomeScreen(),
-                                    ),
-                                    (route) => false,
-                                  );
+                                  Navigator.of(context).popUntil((route) => route.isFirst);
                                 }
                               },
                             ),

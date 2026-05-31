@@ -2,9 +2,14 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
+set "EDGE_PROFILE_DIR=%SCRIPT_DIR%.dart_tool\edge_profile"
 
 if exist "%SCRIPT_DIR%local.env.bat" (
   call "%SCRIPT_DIR%local.env.bat"
+)
+
+if not exist "%EDGE_PROFILE_DIR%" (
+  mkdir "%EDGE_PROFILE_DIR%"
 )
 
 if "%SUPABASE_URL%"=="" (
@@ -22,6 +27,6 @@ if "%SUPABASE_ANON_KEY%"=="" (
 )
 
 echo Starting FamilyCare on Microsoft Edge...
-flutter run -d edge --web-port 3000 --dart-define=SUPABASE_URL=%SUPABASE_URL% --dart-define=SUPABASE_ANON_KEY=%SUPABASE_ANON_KEY%
+flutter run -d edge --web-port 3000 --web-browser-flag=--user-data-dir=%EDGE_PROFILE_DIR% --dart-define=SUPABASE_URL=%SUPABASE_URL% --dart-define=SUPABASE_ANON_KEY=%SUPABASE_ANON_KEY%
 
 endlocal

@@ -1,30 +1,43 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'home_screen.dart';
 import 'welcome_screen.dart';
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  StreamSubscription<AuthState>? _authSubscription;
+  Session? _session;
+
+  @override
+  void initState() {
+    super.initState();
     final auth = Supabase.instance.client.auth;
+    _session = auth.currentSession;
+    _authSubscription = auth.onAuthStateChange.listen((data) {
+      if (!mounted) return;
+      setState(() {
+        _session = data.session;
+      });
+    });
+  }
 
-    return StreamBuilder<AuthState>(
-      stream: auth.onAuthStateChange,
-      builder: (context, snapshot) {
-        final session = auth.currentSession;
-        final hasSession = session != null;
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        return hasSession ? const HomeScreen() : const WelcomeScreen();
-      },
-    );
+  @override
+  Widget build(BuildContext context) {
+    return _session != null ? const HomeScreen() : const WelcomeScreen();
   }
 }

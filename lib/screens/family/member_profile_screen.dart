@@ -12,7 +12,7 @@ class MemberProfileScreen extends StatefulWidget {
     required this.memberId,
     required this.name,
     required this.role,
-    required this.authUserId,
+    required this.userId,
     this.avatarUrl,
     this.birthDate,
     this.bloodType,
@@ -23,7 +23,7 @@ class MemberProfileScreen extends StatefulWidget {
   final String memberId;
   final String name;
   final String role;
-  final String? authUserId;
+  final String? userId;
   final String? avatarUrl;
   final String? birthDate;
   final String? bloodType;
@@ -59,7 +59,7 @@ class _MemberProfileScreenState extends State<MemberProfileScreen> {
     _inviteEmail = widget.inviteEmail;
     final user = Supabase.instance.client.auth.currentUser;
     _creatorEmail = user?.email;
-    _isCreator = user != null && widget.authUserId == user.id;
+    _isCreator = user != null && widget.userId == user.id;
     _loadMemberMedications();
   }
 
@@ -162,7 +162,7 @@ class _MemberProfileScreenState extends State<MemberProfileScreen> {
 
     try {
       await Supabase.instance.client.from('family_medication_plans').update({
-        'status': value ? 'active' : 'inactive',
+        'status': value ? 'active' : 'paused',
       }).eq('id', plan.planId);
     } catch (_) {
       if (!mounted) return;
@@ -274,11 +274,12 @@ class _MemberProfileScreenState extends State<MemberProfileScreen> {
                                       ),
                                     );
                                     if (result == null) return;
-                                    setState(() {
-                                      _name = result['full_name']?.toString() ??
+                                      setState(() {
+                                        _name = result['full_name']?.toString() ??
                                           _name;
-                                      _role =
-                                          result['role']?.toString() ?? _role;
+                                      _role = result['relationship_role']
+                                              ?.toString() ??
+                                          _role;
                                       _birthDate =
                                           result['birth_date']?.toString();
                                       _bloodType =

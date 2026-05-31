@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/healthsync_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
 import 'home_screen.dart';
@@ -19,6 +20,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, dynamic>? _family;
   bool _loading = true;
+  final _healthsync = HealthsyncService(Supabase.instance.client);
 
   @override
   void initState() {
@@ -27,22 +29,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadFamily() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      setState(() => _loading = false);
-      return;
-    }
-
     try {
-      final data = await Supabase.instance.client
-          .from('family_members')
-          .select('family_id, families (family_name)')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
+      final context = await _healthsync.getCurrentFamilyContext();
 
       setState(() {
-        _family = data == null ? null : data['families'] as Map<String, dynamic>?;
+        _family = context == null
+            ? null
+            : {
+                'family_name': context.familyName,
+                'family_code': context.familyCode,
+              };
         _loading = false;
       });
     } catch (_) {

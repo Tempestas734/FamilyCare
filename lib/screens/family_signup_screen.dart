@@ -136,9 +136,9 @@ class _FamilySignUpScreenState extends State<FamilySignUpScreen> {
       final family = await supabase
           .from('families')
           .insert({
-            'family_id': familyId,
+            'family_code': familyId,
             'family_name': familyName,
-            'auth_user_id': user.id,
+            'created_by_user_id': user.id,
           })
           .select()
           .single();
@@ -147,9 +147,9 @@ class _FamilySignUpScreenState extends State<FamilySignUpScreen> {
 
       await supabase.from('family_members').insert({
         'family_id': family['id'],
-        'auth_user_id': user.id,
+        'user_id': user.id,
         'full_name': fullName,
-        'role': role,
+        'relationship_role': role,
         'is_admin': true,
       });
 

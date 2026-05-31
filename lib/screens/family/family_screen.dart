@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/healthsync_service.dart';
 import '../../theme/app_theme.dart';
 import 'add_member_screen.dart';
 import '../home_screen.dart';
@@ -19,6 +20,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
   String? _familyId;
   List<Map<String, dynamic>> _members = [];
   bool _loading = true;
+  final _healthsync = HealthsyncService(Supabase.instance.client);
 
   @override
   void initState() {
@@ -27,48 +29,33 @@ class _FamilyScreenState extends State<FamilyScreen> {
   }
 
   Future<void> _loadFamily() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      setState(() => _loading = false);
-      return;
-    }
-
     try {
-      debugPrint('Family: loading for user=${user.id}');
-      final data = await Supabase.instance.client
-          .from('family_members')
-          .select('family_id')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-
-      debugPrint('Family: member row=$data');
-      final familyId = data?['family_id']?.toString();
+      final context = await _healthsync.getCurrentFamilyContext();
+      final familyId = context?.familyId;
       final members = familyId == null
           ? <Map<String, dynamic>>[]
-          : (await Supabase.instance.client
-                  .from('family_members')
-                  .select('id, full_name, role, auth_user_id, birth_date, blood_type, weight_kg, invite_email')
-                  .eq('family_id', familyId)
-                  .order('created_at'))
-              .cast<Map<String, dynamic>>();
+          : (await _healthsync.getFamilyMembers(familyId))
+              .map(
+                (member) => {
+                  'id': member.id,
+                  'full_name': member.fullName,
+                  'role': member.relationshipRole,
+                  'user_id': member.userId,
+                  'birth_date': member.birthDate,
+                  'blood_type': member.bloodType,
+                  'weight_kg': member.weightKg,
+                  'invite_email': member.inviteEmail,
+                },
+              )
+              .toList();
 
-      Map<String, dynamic>? family;
-      if (familyId != null) {
-        try {
-          family = await Supabase.instance.client
-              .from('families')
-              .select('family_name')
-              .eq('id', familyId)
-              .maybeSingle();
-        } catch (e) {
-          debugPrint('Family: families select error $e');
-        }
-      }
-
-      debugPrint('Family: members count=${members.length}');
       setState(() {
-        _family = family;
+        _family = context == null
+            ? null
+            : {
+                'family_name': context.familyName,
+                'family_code': context.familyCode,
+              };
         _familyId = familyId;
         _members = members;
         _loading = false;
@@ -290,7 +277,8 @@ class _FamilyScreenState extends State<FamilyScreen> {
                                             role:
                                                 member['role']?.toString() ??
                                                     'autre',
-                                            authUserId: member['auth_user_id']?.toString(),
+                                            userId:
+                                                member['user_id']?.toString(),
                                             avatarUrl: _roleAvatarUrl(
                                               member['role']?.toString(),
                                             ),

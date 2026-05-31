@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/healthsync_service.dart';
 import '../../theme/app_theme.dart';
 
 class AddMedicationScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class AddMedicationScreen extends StatefulWidget {
 }
 
 class _AddMedicationScreenState extends State<AddMedicationScreen> {
+  final _healthsync = HealthsyncService(Supabase.instance.client);
   final _nameController = TextEditingController();
   final _dosageValueController = TextEditingController();
   final _intakeAmountController = TextEditingController(text: '1');
@@ -52,14 +54,8 @@ class _AddMedicationScreenState extends State<AddMedicationScreen> {
     }
 
     try {
-      final familyRow = await Supabase.instance.client
-          .from('family_members')
-          .select('family_id')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-
-      final familyId = familyRow?['family_id']?.toString();
+      final familyContext = await _healthsync.getCurrentFamilyContext();
+      final familyId = familyContext?.familyId;
       if (familyId == null || familyId.isEmpty) {
         if (!mounted) return;
         setState(() => _loadingMembers = false);
@@ -68,7 +64,7 @@ class _AddMedicationScreenState extends State<AddMedicationScreen> {
 
       final rows = await Supabase.instance.client
           .from('family_members')
-          .select('id, full_name, role')
+          .select('id, full_name, relationship_role')
           .eq('family_id', familyId)
           .order('created_at');
 
@@ -80,7 +76,7 @@ class _AddMedicationScreenState extends State<AddMedicationScreen> {
               name: (m['full_name']?.toString().trim().isNotEmpty == true)
                   ? m['full_name'].toString()
                   : 'Membre',
-              avatarUrl: _roleAvatarUrl(m['role']?.toString()),
+              avatarUrl: _roleAvatarUrl(m['relationship_role']?.toString()),
             ),
           )
           .toList();

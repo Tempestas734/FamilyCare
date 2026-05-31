@@ -82,7 +82,7 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
       debugPrint('EditMember: user=${user?.id} memberId=${widget.memberId}');
       final payload = <String, dynamic>{
         'full_name': _nameController.text.trim(),
-        'role': _role,
+        'relationship_role': _role,
       };
 
       if (widget.isCreator && (widget.creatorEmail?.isNotEmpty ?? false)) {
@@ -110,27 +110,94 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
       }
 
       debugPrint('EditMember: payload=$payload');
-      await Supabase.instance.client
+      final updatedMember = await Supabase.instance.client
           .from('family_members')
           .update(payload)
-          .eq('id', widget.memberId);
+          .eq('id', widget.memberId)
+          .select('id')
+          .maybeSingle();
+
+      if (updatedMember == null) {
+        throw StateError(
+          'Modification refusee. Vous n avez pas les droits necessaires ou ce membre n est plus accessible.',
+        );
+      }
 
       if (!mounted) return;
       Navigator.of(context).pop({
         'full_name': payload['full_name'],
-        'role': _role,
+        'relationship_role': _role,
         'birth_date': payload['birth_date'],
         'blood_type': payload['blood_type'],
         'weight_kg': payload['weight_kg'],
         'invite_email': payload['invite_email'],
       });
+    } on StateError catch (e) {
+      _showMessage(e.message.toString());
     } on PostgrestException catch (e) {
-      _showMessage('Erreur DB: ${e.message}');
+      _showMessage(_friendlyPostgrestMessage(e, fallback: 'Modification impossible.'));
     } catch (e) {
       _showMessage('Erreur inconnue: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _deleteMember() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final client = Supabase.instance.client;
+      await client
+          .from('family_patients')
+          .delete()
+          .eq('family_member_id', widget.memberId);
+
+      final deletedMember = await client
+          .from('family_members')
+          .delete()
+          .eq('id', widget.memberId)
+          .select('id')
+          .maybeSingle();
+
+      if (deletedMember == null) {
+        throw StateError(
+          'Suppression refusee. Vous n avez pas les droits necessaires ou ce membre n est plus accessible.',
+        );
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on StateError catch (e) {
+      _showMessage(e.message.toString());
+    } on PostgrestException catch (e) {
+      _showMessage(_friendlyPostgrestMessage(e, fallback: 'Suppression impossible.'));
+    } catch (e) {
+      _showMessage('Erreur inconnue: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  String _friendlyPostgrestMessage(
+    PostgrestException error, {
+    required String fallback,
+  }) {
+    final parts = [
+      error.code,
+      error.message,
+      error.details,
+      error.hint,
+    ].whereType<String>().join(' ').toLowerCase();
+
+    if (parts.contains('row-level security') ||
+        parts.contains('violates row-level security policy') ||
+        parts.contains('permission denied') ||
+        parts.contains('42501')) {
+      return 'Operation refusee par les regles de securite. Verifiez que vous etes autorise a modifier ce membre.';
+    }
+
+    return '$fallback ${error.message}';
   }
 
   void _showMessage(String message) {
@@ -373,16 +440,7 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
                     ),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: _isLoading
-                          ? null
-                          : () async {
-                              await Supabase.instance.client
-                                  .from('family_members')
-                                  .delete()
-                                  .eq('id', widget.memberId);
-                              if (!mounted) return;
-                              Navigator.of(context).pop();
-                            },
+                      onPressed: _isLoading ? null : _deleteMember,
                       child: const Text(
                         'Supprimer ce profil',
                         style: TextStyle(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/healthsync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_bottom_nav.dart';
 import 'add_medication_screen.dart';
@@ -16,6 +17,7 @@ class MedicationPlanningScreen extends StatefulWidget {
 }
 
 class _MedicationPlanningScreenState extends State<MedicationPlanningScreen> {
+  final _healthsync = HealthsyncService(Supabase.instance.client);
   bool _showFamily = true;
   bool _loading = true;
   List<_MedicationItem> _items = const [];
@@ -67,14 +69,8 @@ class _MedicationPlanningScreenState extends State<MedicationPlanningScreen> {
         return;
       }
 
-      final familyRow = await Supabase.instance.client
-          .from('family_members')
-          .select('family_id')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-
-      final familyId = _asText(familyRow?['family_id']);
+      final familyContext = await _healthsync.getCurrentFamilyContext();
+      final familyId = familyContext?.familyId;
       if (familyId == null || familyId.isEmpty) {
         if (!mounted) return;
         setState(() {
@@ -87,13 +83,13 @@ class _MedicationPlanningScreenState extends State<MedicationPlanningScreen> {
       final query = Supabase.instance.client
           .from('family_medication_doses')
           .select(
-              'id, scheduled_date, scheduled_time, taken, family_members!inner(id, full_name, role, auth_user_id), family_medications!inner(name, dosage_per_unit), family_medication_plans!inner(intake_amount, intake_unit, status)')
+              'id, scheduled_date, scheduled_time, taken, family_members!inner(id, full_name, relationship_role, user_id), family_medications!inner(name, dosage_per_unit), family_medication_plans!inner(intake_amount, intake_unit, status)')
           .eq('family_id', familyId)
           .eq('scheduled_date', _todayYmd())
           .eq('family_medication_plans.status', 'active');
 
       final data = await (!_showFamily
-          ? query.eq('family_members.auth_user_id', user.id)
+          ? query.eq('family_members.user_id', user.id)
           : query).order('scheduled_time');
 
       final items = _mapDosesForToday(data as List<dynamic>, showFamily: _showFamily)
@@ -654,7 +650,7 @@ List<_MedicationItem> _mapDosesForToday(
 
     final memberName = _asText(member?['full_name']) ?? 'Membre';
     final person = showFamily ? 'Pour $memberName' : 'Pour Moi';
-    final avatarUrl = _avatarForRole(_asText(member?['role']));
+    final avatarUrl = _avatarForRole(_asText(member?['relationship_role']));
     final taken = row['taken'] == true;
 
     final timeRaw = _asText(row['scheduled_time']);

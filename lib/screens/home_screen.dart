@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/healthsync_service.dart';
 import '../theme/app_theme.dart';
 import 'settings_screen.dart';
 import 'calendar/calendar_screen.dart';
@@ -13,6 +14,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final _healthsync = HealthsyncService(Supabase.instance.client);
   Map<String, dynamic>? _family;
   bool _loading = true;
   bool _loadingToday = true;
@@ -40,55 +42,47 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      final data = await Supabase.instance.client
-          .from('family_members')
-          .select('id, family_id, families (family_name)')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-
-      final familyId = data?['family_id']?.toString();
-      final memberId = data?['id']?.toString();
+      final context = await _healthsync.getCurrentFamilyContext();
+      final familyId = context?.familyId;
+      final memberId = context?.familyMemberId;
       List<String> familyAvatars = const [];
       int activeMembers = 0;
       List<_FamilyMemberChoice> familyMembers = const [];
       if (familyId != null && familyId.isNotEmpty) {
-        final memberRows = await Supabase.instance.client
-            .from('family_members')
-            .select('id, full_name, role, auth_user_id')
-            .eq('family_id', familyId)
-            .order('created_at');
-        final rows = (memberRows as List<dynamic>)
-            .whereType<Map>()
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList();
+        final rows = await _healthsync.getFamilyMembers(familyId);
         familyMembers = rows
             .map(
-              (row) => _FamilyMemberChoice(
-                id: row['id']?.toString() ?? '',
-                name: _asText(row['full_name']) ?? 'Membre',
-                role: _asText(row['role']) ?? 'autre',
+              (member) => _FamilyMemberChoice(
+                id: member.id,
+                name: member.fullName,
+                role: member.relationshipRole,
               ),
             )
             .where((m) => m.id.isNotEmpty)
             .toList();
         familyAvatars = rows
-            .map((row) => _avatarForRole(row['role']?.toString()))
+            .map((member) => _avatarForRole(member.relationshipRole))
             .toList();
         activeMembers = rows
-            .where((row) => _asText(row['auth_user_id']) != null)
+            .where((member) => _asText(member.userId) != null)
             .length;
         await _loadTodayItems(
           familyId: familyId,
           userId: user.id,
           memberId: memberId,
+          familyMembers: familyMembers,
         );
       } else {
         _loadingToday = false;
       }
 
       setState(() {
-        _family = data == null ? null : data['families'] as Map<String, dynamic>?;
+        _family = context == null
+            ? null
+            : {
+                'family_name': context.familyName,
+                'family_code': context.familyCode,
+              };
         _familyMemberAvatars = familyAvatars;
         _activeFamilyMembers = activeMembers;
         _familyMembers = familyMembers;
@@ -119,6 +113,24 @@ class _HomeScreenState extends State<HomeScreen> {
     return '--:--';
   }
 
+  String _hhmmFromDateTime(DateTime value) {
+    final hh = value.hour.toString().padLeft(2, '0');
+    final mm = value.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
+  String _ymdFromDateTime(DateTime value) {
+    final y = value.year.toString().padLeft(4, '0');
+    final m = value.month.toString().padLeft(2, '0');
+    final d = value.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  bool _isCancelledStatus(String status) {
+    final normalized = status.trim().toLowerCase();
+    return normalized.startsWith('cancel') || normalized == 'annule';
+  }
+
   Map<String, dynamic>? _extractMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
     if (value is List && value.isNotEmpty) {
@@ -141,6 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required String familyId,
     required String userId,
     required String? memberId,
+    required List<_FamilyMemberChoice> familyMembers,
   }) async {
     try {
       if (mounted) {
@@ -149,27 +162,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final today = _todayYmd();
 
-      final rdvFamilyQuery = Supabase.instance.client
-          .from('rendez_vous')
-          .select(
-              'date, heure, status, family_members!inner(id, full_name, role, auth_user_id), medecins_famille!inner(family_id, medecins(first_name, last_name, specialite))')
-          .eq('medecins_famille.family_id', familyId)
-          .eq('date', today)
-          .neq('status', 'annule');
-
-      final rdvMeQuery = Supabase.instance.client
-          .from('rendez_vous')
-          .select(
-              'date, heure, status, family_members!inner(id, full_name, role, auth_user_id), medecins_famille!inner(family_id, medecins(first_name, last_name, specialite))')
-          .eq('medecins_famille.family_id', familyId)
-          .eq('date', today)
-          .eq('family_members.auth_user_id', userId)
-          .neq('status', 'annule');
+      final familyPatientLinks = await _healthsync.getFamilyPatientLinks(familyId);
+      final familyAppointments = await _healthsync.getFamilyAppointments(familyId);
+      final meAppointments = memberId != null && memberId.isNotEmpty
+          ? await _healthsync.getAppointmentsForFamilyMember(
+              familyId: familyId,
+              familyMemberId: memberId,
+            )
+          : const <HealthsyncAppointment>[];
 
       final medFamilyQuery = Supabase.instance.client
           .from('family_medication_doses')
           .select(
-              'id, scheduled_time, taken, family_members!inner(id, full_name, role, auth_user_id), family_medications!inner(name), family_medication_plans!inner(status)')
+              'id, scheduled_time, taken, family_members!inner(id, full_name, relationship_role, user_id), family_medications!inner(name), family_medication_plans!inner(status)')
           .eq('family_id', familyId)
           .eq('scheduled_date', today)
           .eq('taken', false)
@@ -178,7 +183,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final medMeQuery = Supabase.instance.client
           .from('family_medication_doses')
           .select(
-              'id, scheduled_time, taken, family_members!inner(id, full_name, role, auth_user_id), family_medications!inner(name), family_medication_plans!inner(status)')
+              'id, scheduled_time, taken, family_members!inner(id, full_name, relationship_role, user_id), family_medications!inner(name), family_medication_plans!inner(status)')
           .eq('family_id', familyId)
           .eq('scheduled_date', today)
           .eq('taken', false)
@@ -186,16 +191,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final medMeFiltered = (memberId != null && memberId.isNotEmpty)
           ? medMeQuery.eq('member_id', memberId)
-          : medMeQuery.eq('family_members.auth_user_id', userId);
+          : medMeQuery.eq('family_members.user_id', userId);
 
-      final rdvFamily = await rdvFamilyQuery.order('heure');
-      final rdvMe = await rdvMeQuery.order('heure');
       final medFamily = await medFamilyQuery.order('scheduled_time');
       final medMe = await medMeFiltered.order('scheduled_time');
       final takenFamilyQuery = Supabase.instance.client
           .from('family_medication_doses')
           .select(
-              'taken_at, scheduled_time, family_members!inner(id, full_name, role, auth_user_id), family_medications!inner(name)')
+              'taken_at, scheduled_time, family_members!inner(id, full_name, relationship_role, user_id), family_medications!inner(name)')
           .eq('family_id', familyId)
           .eq('taken', true)
           .not('taken_at', 'is', null)
@@ -204,38 +207,48 @@ class _HomeScreenState extends State<HomeScreen> {
       final takenMeQueryBase = Supabase.instance.client
           .from('family_medication_doses')
           .select(
-              'taken_at, scheduled_time, family_members!inner(id, full_name, role, auth_user_id), family_medications!inner(name)')
+              'taken_at, scheduled_time, family_members!inner(id, full_name, relationship_role, user_id), family_medications!inner(name)')
           .eq('family_id', familyId)
           .eq('taken', true)
           .not('taken_at', 'is', null);
       final takenMeFiltered = (memberId != null && memberId.isNotEmpty)
           ? takenMeQueryBase.eq('member_id', memberId)
-          : takenMeQueryBase.eq('family_members.auth_user_id', userId);
+          : takenMeQueryBase.eq('family_members.user_id', userId);
       final takenFamily = await takenFamilyQuery;
       final takenMe = await takenMeFiltered
           .order('taken_at', ascending: false)
           .limit(10);
 
-      List<_HomeAgendaItem> mapRdv(List<dynamic> rows) {
-        return rows.map((raw) {
-          final row = raw as Map<String, dynamic>;
-          final member = _extractMap(row['family_members']);
-          final medFam = _extractMap(row['medecins_famille']);
-          final medecin = _extractMap(medFam?['medecins']);
-          final firstName = medecin?['first_name']?.toString() ?? '';
-          final lastName = medecin?['last_name']?.toString() ?? '';
-          final doctor = 'Dr. ${'$firstName $lastName'.trim()}'.trim();
-          final specialty = medecin?['specialite']?.toString() ?? 'Medecin';
-          final roleOrName =
-              _asText(member?['role']) ?? _asText(member?['full_name']) ?? 'Membre';
+      final familyMembersById = <String, _FamilyMemberChoice>{
+        for (final member in familyMembers) member.id: member,
+      };
+
+      List<_HomeAgendaItem> mapRdv(List<HealthsyncAppointment> rows) {
+        final filteredRows = rows.where((appointment) {
+          final localDate = appointment.scheduledAt.toLocal();
+          return _ymdFromDateTime(localDate) == today &&
+              !_isCancelledStatus(appointment.status);
+        }).toList()
+          ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
+
+        return filteredRows.map((appointment) {
+          final linkedMemberId = familyPatientLinks[appointment.patientId];
+          final linkedMember = linkedMemberId == null
+              ? null
+              : familyMembersById[linkedMemberId];
+          final roleOrName = linkedMember == null
+              ? appointment.patientName
+              : (linkedMember.role.trim().isNotEmpty
+                  ? linkedMember.role
+                  : linkedMember.name);
           return _HomeAgendaItem(
-            time: _hhmm(row['heure']),
-            title: 'RDV $specialty',
-            subtitle: 'Pour $roleOrName • $doctor',
+            time: _hhmmFromDateTime(appointment.scheduledAt.toLocal()),
+            title: 'RDV ${appointment.specialty}',
+            subtitle: 'Pour $roleOrName • ${appointment.doctorName}',
             icon: Icons.medical_services,
             iconBg: const Color(0xFF133654),
             iconColor: const Color(0xFF68B6FF),
-            memberId: member?['id']?.toString(),
+            memberId: linkedMemberId,
           );
         }).toList();
       }
@@ -246,7 +259,9 @@ class _HomeScreenState extends State<HomeScreen> {
           final member = _extractMap(row['family_members']);
           final med = _extractMap(row['family_medications']);
           final roleOrName =
-              _asText(member?['role']) ?? _asText(member?['full_name']) ?? 'Membre';
+              _asText(member?['relationship_role']) ??
+                  _asText(member?['full_name']) ??
+                  'Membre';
           return _HomeAgendaItem(
             time: _hhmm(row['scheduled_time']),
             title: med?['name']?.toString() ?? 'Medicament',
@@ -261,9 +276,9 @@ class _HomeScreenState extends State<HomeScreen> {
         }).toList();
       }
 
-      final familyItems = [...mapRdv(rdvFamily), ...mapMeds(medFamily)]
+      final familyItems = [...mapRdv(familyAppointments), ...mapMeds(medFamily)]
         ..sort((a, b) => a.time.compareTo(b.time));
-      final meItems = [...mapRdv(rdvMe), ...mapMeds(medMe)]
+      final meItems = [...mapRdv(meAppointments), ...mapMeds(medMe)]
         ..sort((a, b) => a.time.compareTo(b.time));
       List<_HomeTimelineItem> mapTaken(List<dynamic> rows) {
         return rows.map((raw) {
@@ -272,14 +287,16 @@ class _HomeScreenState extends State<HomeScreen> {
           final med = _extractMap(row['family_medications']);
           final takenAt = DateTime.tryParse(row['taken_at']?.toString() ?? '');
           final roleOrName =
-              _asText(member?['role']) ?? _asText(member?['full_name']) ?? 'Membre';
+              _asText(member?['relationship_role']) ??
+                  _asText(member?['full_name']) ??
+                  'Membre';
           final medName = med?['name']?.toString() ?? 'medicament';
           final plannedTime = _hhmm(row['scheduled_time']);
           return _HomeTimelineItem(
             name: roleOrName,
             time: _relativeFromNow(takenAt),
             content: 'a pris $medName (prevu a $plannedTime).',
-            imageUrl: _avatarForRole(member?['role']?.toString()),
+            imageUrl: _avatarForRole(member?['relationship_role']?.toString()),
             memberId: member?['id']?.toString(),
           );
         }).take(3).toList();

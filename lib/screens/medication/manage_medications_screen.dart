@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/healthsync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_bottom_nav.dart';
 import 'add_medication_screen.dart';
@@ -15,6 +16,7 @@ class ManageMedicationsScreen extends StatefulWidget {
 }
 
 class _ManageMedicationsScreenState extends State<ManageMedicationsScreen> {
+  final _healthsync = HealthsyncService(Supabase.instance.client);
   bool _loading = true;
   List<_MedicationRow> _rows = const [];
   List<_FamilyMember> _members = const [];
@@ -40,14 +42,8 @@ class _ManageMedicationsScreenState extends State<ManageMedicationsScreen> {
         return;
       }
 
-      final familyRow = await Supabase.instance.client
-          .from('family_members')
-          .select('family_id')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-
-      final familyId = familyRow?['family_id']?.toString();
+      final familyContext = await _healthsync.getCurrentFamilyContext();
+      final familyId = familyContext?.familyId;
       if (familyId == null || familyId.isEmpty) {
         if (!mounted) return;
         setState(() {
@@ -60,7 +56,7 @@ class _ManageMedicationsScreenState extends State<ManageMedicationsScreen> {
 
       final membersData = await Supabase.instance.client
           .from('family_members')
-          .select('id, full_name, role')
+          .select('id, full_name, relationship_role')
           .eq('family_id', familyId)
           .order('created_at');
       final members = (membersData as List)
@@ -71,7 +67,7 @@ class _ManageMedicationsScreenState extends State<ManageMedicationsScreen> {
               fullName: (m['full_name']?.toString().trim().isNotEmpty == true)
                   ? m['full_name'].toString()
                   : 'Membre',
-              role: m['role']?.toString(),
+              role: m['relationship_role']?.toString(),
             ),
           )
           .where((m) => m.id.isNotEmpty)

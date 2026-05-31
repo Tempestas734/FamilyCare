@@ -1,7 +1,7 @@
 -- Medications: family stock + treatment planning
 -- Compatible with existing tables used in app:
 -- - families(id)
--- - family_members(id, family_id, auth_user_id)
+-- - family_members(id, family_id, user_id)
 
 -- 1) Common trigger helper for updated_at
 create or replace function public.set_updated_at()
@@ -129,7 +129,7 @@ using (
     select 1
     from public.family_members fm
     where fm.family_id = family_medications.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -142,7 +142,7 @@ using (
     select 1
     from public.family_members fm
     where fm.family_id = family_medication_plans.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -156,7 +156,7 @@ with check (
     select 1
     from public.family_members fm
     where fm.family_id = family_medications.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -169,7 +169,7 @@ using (
     select 1
     from public.family_members fm
     where fm.family_id = family_medications.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 )
 with check (
@@ -177,7 +177,7 @@ with check (
     select 1
     from public.family_members fm
     where fm.family_id = family_medications.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -190,7 +190,7 @@ using (
     select 1
     from public.family_members fm
     where fm.family_id = family_medications.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -203,7 +203,7 @@ with check (
     select 1
     from public.family_members fm
     where fm.family_id = family_medication_plans.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -216,7 +216,7 @@ using (
     select 1
     from public.family_members fm
     where fm.family_id = family_medication_plans.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 )
 with check (
@@ -224,7 +224,7 @@ with check (
     select 1
     from public.family_members fm
     where fm.family_id = family_medication_plans.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );
 
@@ -237,6 +237,6 @@ using (
     select 1
     from public.family_members fm
     where fm.family_id = family_medication_plans.family_id
-      and fm.auth_user_id = auth.uid()
+      and fm.user_id = auth.uid()
   )
 );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
+import '../../services/healthsync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/doctor_images.dart';
 import '../../widgets/app_bottom_nav.dart';
@@ -15,6 +16,7 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
+  final _healthsync = HealthsyncService(Supabase.instance.client);
   bool _showFamily = true;
   bool _loading = true;
   List<_RendezVousEvent> _events = [];
@@ -33,53 +35,49 @@ class _CalendarScreenState extends State<CalendarScreen> {
       if (mounted) {
         setState(() => _loading = true);
       }
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) {
-        if (!mounted) return;
-        setState(() => _loading = false);
-        return;
-      }
-
-      final familyRow = await Supabase.instance.client
-          .from('family_members')
-          .select('family_id')
-          .eq('auth_user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-      final familyId = familyRow?['family_id']?.toString();
+      final familyContext = await _healthsync.getCurrentFamilyContext();
+      final familyId = familyContext?.familyId;
+      final familyMemberId = familyContext?.familyMemberId;
       if (familyId == null) {
         if (!mounted) return;
         setState(() => _loading = false);
         return;
       }
 
-      final rdvQuery = Supabase.instance.client
-          .from('rendez_vous')
-          .select(
-              'id, date, heure, status, family_members!inner (id, full_name, role, auth_user_id), medecins_famille!inner (id, family_id, medecins (id, first_name, last_name, specialite, photo_url))')
-          .eq('medecins_famille.family_id', familyId)
-          .neq('status', 'annule');
-
-      final rdvData = await (!_showFamily
-          ? rdvQuery.eq('family_members.auth_user_id', user.id)
-          : rdvQuery)
-          .order('date')
-          .order('heure');
-      final rdvItems = (rdvData as List<dynamic>)
-          .map((row) => _RendezVousEvent.fromRdvMap(row as Map<String, dynamic>))
+      final familyMembers = await _healthsync.getFamilyMembers(familyId);
+      final familyMembersById = {
+        for (final member in familyMembers) member.id: member,
+      };
+      final familyPatientLinks = await _healthsync.getFamilyPatientLinks(familyId);
+      final appointments = _showFamily
+          ? await _healthsync.getFamilyAppointments(familyId)
+          : (familyMemberId == null || familyMemberId.isEmpty
+              ? const <HealthsyncAppointment>[]
+              : await _healthsync.getAppointmentsForFamilyMember(
+                  familyId: familyId,
+                  familyMemberId: familyMemberId,
+                ));
+      final rdvItems = appointments
+          .where((appointment) => !_isCancelledStatus(appointment.status))
+          .map(
+            (appointment) => _RendezVousEvent.fromAppointment(
+              appointment,
+              linkedMember: familyMembersById[familyPatientLinks[appointment.patientId]],
+            ),
+          )
           .where((item) => item.dateTime != null)
           .toList();
 
       final dosesQuery = Supabase.instance.client
           .from('family_medication_doses')
           .select(
-              'id, scheduled_date, scheduled_time, taken, family_members!inner(id, full_name, role, auth_user_id), family_medications!inner(name, dosage_per_unit), family_medication_plans!inner(intake_amount, intake_unit, status)')
+              'id, scheduled_date, scheduled_time, taken, family_members!inner(id, full_name, relationship_role, user_id), family_medications!inner(name, dosage_per_unit), family_medication_plans!inner(intake_amount, intake_unit, status)')
           .eq('family_id', familyId)
           .eq('taken', false)
           .eq('family_medication_plans.status', 'active');
 
-      final dosesData = await (!_showFamily
-          ? dosesQuery.eq('family_members.auth_user_id', user.id)
+      final dosesData = await (!_showFamily && familyMemberId != null && familyMemberId.isNotEmpty
+          ? dosesQuery.eq('member_id', familyMemberId)
           : dosesQuery)
           .order('scheduled_date')
           .order('scheduled_time');
@@ -714,62 +712,21 @@ class _RendezVousEvent {
   final bool isMedication;
   final String? medicationName;
 
-  factory _RendezVousEvent.fromRdvMap(Map<String, dynamic> map) {
-    final dateStr = map['date']?.toString();
-    final timeStr = map['heure']?.toString();
-    DateTime? dateTime;
-    if (dateStr != null && timeStr != null) {
-      final hourMinute = timeStr.length >= 5 ? timeStr.substring(0, 5) : timeStr;
-      dateTime = DateTime.tryParse('$dateStr $hourMinute:00');
-    }
-
-    final memberRaw = map['family_members'];
-    Map<String, dynamic>? member;
-    if (memberRaw is Map<String, dynamic>) {
-      member = memberRaw;
-    } else if (memberRaw is List && memberRaw.isNotEmpty) {
-      final first = memberRaw.first;
-      if (first is Map<String, dynamic>) {
-        member = first;
-      }
-    }
-
-    final medecinsFamRaw = map['medecins_famille'];
-    Map<String, dynamic>? medecinsFam;
-    if (medecinsFamRaw is Map<String, dynamic>) {
-      medecinsFam = medecinsFamRaw;
-    } else if (medecinsFamRaw is List && medecinsFamRaw.isNotEmpty) {
-      final first = medecinsFamRaw.first;
-      if (first is Map<String, dynamic>) {
-        medecinsFam = first;
-      }
-    }
-
-    Map<String, dynamic>? medecin;
-    final medecinRaw = medecinsFam?['medecins'];
-    if (medecinRaw is Map<String, dynamic>) {
-      medecin = medecinRaw;
-    } else if (medecinRaw is List && medecinRaw.isNotEmpty) {
-      final first = medecinRaw.first;
-      if (first is Map<String, dynamic>) {
-        medecin = first;
-      }
-    }
-
-    final firstName = medecin?['first_name']?.toString() ?? '';
-    final lastName = medecin?['last_name']?.toString() ?? '';
-    final doctorName = 'Dr. ${'$firstName $lastName'.trim()}'.trim();
-
+  factory _RendezVousEvent.fromAppointment(
+    HealthsyncAppointment appointment, {
+    HealthsyncFamilyMember? linkedMember,
+  }) {
+    final memberName = linkedMember?.fullName ?? appointment.patientName;
+    final memberRole = linkedMember?.relationshipRole ?? '';
     return _RendezVousEvent(
-      id: map['id']?.toString() ?? '',
-      dateTime: dateTime,
-      memberName: member?['full_name']?.toString() ?? 'Membre',
-      memberRole: member?['role']?.toString() ?? '',
-      doctorName: doctorName.isEmpty ? 'Dr.' : doctorName,
-      specialty: medecin?['specialite']?.toString() ?? 'Medecin',
-      photoUrl: medecin?['photo_url']?.toString(),
-      title:
-          'RDV ${medecin?['specialite']?.toString() ?? 'Medecin'} - ${doctorName.isEmpty ? 'Dr.' : doctorName}',
+      id: appointment.id,
+      dateTime: appointment.scheduledAt.toLocal(),
+      memberName: memberName,
+      memberRole: memberRole,
+      doctorName: appointment.doctorName,
+      specialty: appointment.specialty,
+      photoUrl: appointment.photoUrl,
+      title: 'RDV ${appointment.specialty} - ${appointment.doctorName}',
       isMedication: false,
     );
   }
@@ -843,10 +800,10 @@ List<_RendezVousEvent> _mapMedicationDoseEvents(List<dynamic> rows) {
         id: row['id']?.toString() ?? '',
         dateTime: dateTime,
         memberName: member?['full_name']?.toString() ?? 'Membre',
-        memberRole: member?['role']?.toString() ?? '',
+        memberRole: member?['relationship_role']?.toString() ?? '',
         doctorName: 'Medicaments',
         specialty: 'Traitement',
-        photoUrl: _avatarForRole(member?['role']?.toString()),
+        photoUrl: _avatarForRole(member?['relationship_role']?.toString()),
         title: title,
         isMedication: true,
         medicationName: medName,
@@ -910,4 +867,9 @@ String _formatTimeOfDay(DateTime dateTime) {
 
 bool _isSameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+bool _isCancelledStatus(String status) {
+  final normalized = status.trim().toLowerCase();
+  return normalized.startsWith('cancel') || normalized == 'annule';
 }

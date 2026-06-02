@@ -20,7 +20,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _showFamily = true;
   bool _loading = true;
   List<_RendezVousEvent> _events = [];
-  String? _familyId;
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
 
@@ -90,7 +89,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
       if (!mounted) return;
       setState(() {
-        _familyId = familyId;
         _events = items;
         _loading = false;
       });
@@ -561,27 +559,6 @@ class _CalendarCard extends StatelessWidget {
             );
           },
         ),
-      ),
-    );
-  }
-}
-
-class _Dot extends StatelessWidget {
-  const _Dot({required this.active});
-
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: 6,
-      height: 6,
-      decoration: BoxDecoration(
-        color: active
-            ? theme.colorScheme.primary
-            : theme.colorScheme.primary.withOpacity(0.4),
-        shape: BoxShape.circle,
       ),
     );
   }

@@ -255,6 +255,7 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
                                         specialty: doctor.specialty,
                                         location: _doctorSummaryLocation(doctor),
                                         imageUrl: imageUrl,
+                                        autoStartBooking: true,
                                       ),
                                     ),
                                   );

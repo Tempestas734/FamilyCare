@@ -26,6 +26,7 @@ class DoctorProfileScreen extends StatefulWidget {
     this.note,
     this.disponibilite,
     this.typesConsultation = const [],
+    this.autoStartBooking = false,
   });
 
   final String doctorId;
@@ -47,6 +48,7 @@ class DoctorProfileScreen extends StatefulWidget {
   final double? note;
   final DateTime? disponibilite;
   final List<String> typesConsultation;
+  final bool autoStartBooking;
 
   @override
   State<DoctorProfileScreen> createState() => _DoctorProfileScreenState();
@@ -59,8 +61,9 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
   DoctorEstablishment? _selectedEstablishment;
   List<DoctorAvailabilityDay> _availability = const [];
   List<DoctorUnavailability> _unavailabilities = const [];
-  List<DateTime> _takenSlots = const [];
+  List<OccupiedAppointmentSlot> _takenSlots = const [];
   List<DateTime> _availableSlots = const [];
+  bool _didRunAutoBooking = false;
 
   @override
   void initState() {
@@ -74,6 +77,19 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       if (doctor == null) {
         if (!mounted) return;
         setState(() => _loading = false);
+        return;
+      }
+      if (doctor.establishments.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _doctor = doctor;
+          _selectedEstablishment = null;
+          _availability = const [];
+          _unavailabilities = const [];
+          _takenSlots = const [];
+          _availableSlots = const [];
+          _loading = false;
+        });
         return;
       }
       final establishment = doctor.establishments.firstWhere(
@@ -130,6 +146,17 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
         _availableSlots = availableSlots;
         _loading = false;
       });
+      if (widget.autoStartBooking &&
+          !_didRunAutoBooking &&
+          availableSlots.isNotEmpty &&
+          mounted) {
+        _didRunAutoBooking = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _bookAppointment();
+          }
+        });
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -142,8 +169,8 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     if (doctor == null || establishment == null || _availableSlots.isEmpty) {
       return;
     }
-    final member = await _pickFamilyMember(context);
-    if (!mounted || member == null) return;
+      final member = await _pickFamilyMember(context);
+      if (!mounted || member == null) return;
 
     final slot = await showModalBottomSheet<DateTime>(
       context: context,
@@ -223,6 +250,22 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     }
   }
 
+  String _availabilityStatusMessage() {
+    if (_selectedEstablishment == null) {
+      return 'Reservation indisponible sans etablissement actif.';
+    }
+    if (_availability.isEmpty) {
+      return 'Le medecin est indisponible: aucun horaire actif n\'est configure.';
+    }
+    if (_availableSlots.isNotEmpty) {
+      return '${_availableSlots.length} creneaux disponibles sur 14 jours';
+    }
+    if (_unavailabilities.isNotEmpty) {
+      return 'Le medecin est indisponible sur cette periode.';
+    }
+    return 'Le medecin n\'a plus de creneaux disponibles sur cette periode.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = ThemeData.light().copyWith(
@@ -299,7 +342,9 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                         title: 'Horaires',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: _availability.isEmpty
+                          children: _selectedEstablishment == null
+                              ? const [Text('Aucun etablissement actif pour ce medecin.')]
+                              : _availability.isEmpty
                               ? const [Text('Aucun horaire actif.')]
                               : _availability
                                   .map(
@@ -335,11 +380,7 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                       const SizedBox(height: 16),
                       _SectionCard(
                         title: 'Disponibilites',
-                        child: _availableSlots.isEmpty
-                            ? const Text('Aucun creneau disponible.')
-                            : Text(
-                                '${_availableSlots.length} creneaux disponibles sur 14 jours',
-                              ),
+                        child: Text(_availabilityStatusMessage()),
                       ),
                       const SizedBox(height: 16),
                       SizedBox(

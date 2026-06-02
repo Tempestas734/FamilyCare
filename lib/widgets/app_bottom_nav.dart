@@ -27,9 +27,11 @@ class AppBottomNav extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFFF7F6F8).withOpacity(0.9),
+          color: const Color(0xFFF7F6F8).withValues(alpha: 0.9),
           border: Border(
-            top: BorderSide(color: theme.colorScheme.primary.withOpacity(0.1)),
+            top: BorderSide(
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
+            ),
           ),
         ),
         child: Row(
@@ -78,7 +80,7 @@ class _NavItem extends StatelessWidget {
     final theme = Theme.of(context);
     final color = active
         ? theme.colorScheme.primary
-        : theme.colorScheme.primary.withOpacity(0.4);
+        : theme.colorScheme.primary.withValues(alpha: 0.4);
 
     return InkWell(
       onTap: onTap,

@@ -107,7 +107,8 @@ class _DoctorListScreenState extends State<DoctorListScreen> {
                             : ListView.separated(
                                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
                                 itemCount: _doctors.length,
-                                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                separatorBuilder: (context, index) =>
+                                    const SizedBox(height: 12),
                                 itemBuilder: (context, index) {
                                   final doctor = _doctors[index];
                                   final imageUrl = doctor.doctor.photoUrl?.isNotEmpty == true

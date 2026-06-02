@@ -397,6 +397,32 @@ class DoctorUnavailability {
   }
 }
 
+class OccupiedAppointmentSlot {
+  const OccupiedAppointmentSlot({
+    required this.start,
+    required this.end,
+    required this.status,
+  });
+
+  final DateTime start;
+  final DateTime end;
+  final String status;
+
+  factory OccupiedAppointmentSlot.fromMap(Map<String, dynamic> map) {
+    final start =
+        DateTime.tryParse(_asText(map['scheduled_at']) ?? '')?.toLocal();
+    final explicitEnd =
+        DateTime.tryParse(_asText(map['scheduled_end_at']) ?? '')?.toLocal();
+    final durationMinutes = (map['duration_minutes'] as num?)?.toInt() ?? 15;
+    final safeStart = start ?? DateTime.fromMillisecondsSinceEpoch(0).toLocal();
+    return OccupiedAppointmentSlot(
+      start: safeStart,
+      end: explicitEnd ?? safeStart.add(Duration(minutes: durationMinutes)),
+      status: _asText(map['status']) ?? 'pending',
+    );
+  }
+}
+
 class HealthsyncAppointment {
   const HealthsyncAppointment({
     required this.id,
@@ -1108,7 +1134,7 @@ class HealthsyncService {
         .toList();
   }
 
-  Future<List<DateTime>> getTakenAppointmentSlots({
+  Future<List<OccupiedAppointmentSlot>> getTakenAppointmentSlots({
     required String medecinId,
     required String etablissementId,
     required DateTime from,
@@ -1123,12 +1149,14 @@ class HealthsyncService {
         .lt('scheduled_at', to.toIso8601String())
         .inFilter('status', ['pending', 'confirmed', 'follow_up_planned']);
 
-    final slots = <DateTime>[];
+    final slots = <OccupiedAppointmentSlot>[];
     for (final raw in rows as List<dynamic>) {
       final row = _extractMap(raw);
-      final scheduledAt = _parseDateTime(row?['scheduled_at']);
-      if (scheduledAt != null) {
-        slots.add(scheduledAt.toLocal());
+      if (row != null) {
+        final slot = OccupiedAppointmentSlot.fromMap(row);
+        if (slot.start.year > 1970) {
+          slots.add(slot);
+        }
       }
     }
     return slots;
@@ -1171,7 +1199,7 @@ class HealthsyncService {
     required DateTime slot,
     required List<DoctorAvailabilityDay> availability,
     required List<DoctorUnavailability> unavailabilities,
-    required List<DateTime> takenSlots,
+    required List<OccupiedAppointmentSlot> takenSlots,
     int durationMinutes = 15,
   }) {
     final targetWeekday = _dbWeekday(slot);
@@ -1216,15 +1244,20 @@ class HealthsyncService {
       if (overlapsUnavailability) return false;
     }
 
-    final slotKey = _slotKey(slot.toLocal());
-    final takenKeys = takenSlots.map((item) => _slotKey(item.toLocal())).toSet();
-    return !takenKeys.contains(slotKey);
+    final localSlot = slot.toLocal();
+    final localSlotEnd = localSlot.add(Duration(minutes: durationMinutes));
+    for (final takenSlot in takenSlots) {
+      final overlapsTakenSlot =
+          localSlot.isBefore(takenSlot.end) && localSlotEnd.isAfter(takenSlot.start);
+      if (overlapsTakenSlot) return false;
+    }
+    return true;
   }
 
   List<DateTime> buildAvailableSlots({
     required List<DoctorAvailabilityDay> availability,
     required List<DoctorUnavailability> unavailabilities,
-    required List<DateTime> takenSlots,
+    required List<OccupiedAppointmentSlot> takenSlots,
     required DateTime from,
     int durationMinutes = 15,
     int numberOfDays = 14,
@@ -1383,15 +1416,19 @@ class HealthsyncService {
         .toList();
     final usersById = <String, Map<String, dynamic>>{};
     if (userIds.isNotEmpty) {
-      final usersRaw = await client
-          .from('users')
-          .select('id, first_name, last_name, email, phone, is_active')
-          .inFilter('id', userIds);
-      for (final raw in usersRaw as List<dynamic>) {
-        if (raw is! Map) continue;
-        final row = Map<String, dynamic>.from(raw);
-        final id = _asText(row['id']);
-        if (id != null) usersById[id] = row;
+      try {
+        final usersRaw = await client
+            .from('users')
+            .select('id, first_name, last_name, email, phone, is_active')
+            .inFilter('id', userIds);
+        for (final raw in usersRaw as List<dynamic>) {
+          if (raw is! Map) continue;
+          final row = Map<String, dynamic>.from(raw);
+          final id = _asText(row['id']);
+          if (id != null) usersById[id] = row;
+        }
+      } catch (_) {
+        // Keep loading doctors even if related public user info is restricted.
       }
     }
 
@@ -1402,36 +1439,40 @@ class HealthsyncService {
         .toList();
     final establishmentsByDoctorId = <String, List<Map<String, dynamic>>>{};
     if (doctorIds.isNotEmpty) {
-      final linksRaw = await client.from('medecin_etablissements').select('''
-        id,
-        medecin_id,
-        etablissement_id,
-        role,
-        actif,
-        can_issue_prescriptions,
-        can_sign_documents,
-        etablissement:etablissement_id (
+      try {
+        final linksRaw = await client.from('medecin_etablissements').select('''
           id,
-          nom,
-          type_etablissement,
-          pays,
-          ville,
-          adresse,
-          latitude,
-          longitude,
-          telephone,
-          email,
-          actif
-        )
-      ''').inFilter('medecin_id', doctorIds);
-      for (final raw in linksRaw as List<dynamic>) {
-        if (raw is! Map) continue;
-        final row = Map<String, dynamic>.from(raw);
-        final medecinId = _asText(row['medecin_id']);
-        final etablissement = _extractMap(row['etablissement']);
-        if (medecinId == null || etablissement == null) continue;
-        if (row['actif'] == false || etablissement['actif'] == false) continue;
-        establishmentsByDoctorId.putIfAbsent(medecinId, () => []).add(row);
+          medecin_id,
+          etablissement_id,
+          role,
+          actif,
+          can_issue_prescriptions,
+          can_sign_documents,
+          etablissement:etablissement_id (
+            id,
+            nom,
+            type_etablissement,
+            pays,
+            ville,
+            adresse,
+            latitude,
+            longitude,
+            telephone,
+            email,
+            actif
+          )
+        ''').inFilter('medecin_id', doctorIds);
+        for (final raw in linksRaw as List<dynamic>) {
+          if (raw is! Map) continue;
+          final row = Map<String, dynamic>.from(raw);
+          final medecinId = _asText(row['medecin_id']);
+          final etablissement = _extractMap(row['etablissement']);
+          if (medecinId == null || etablissement == null) continue;
+          if (row['actif'] == false || etablissement['actif'] == false) continue;
+          establishmentsByDoctorId.putIfAbsent(medecinId, () => []).add(row);
+        }
+      } catch (_) {
+        // Keep loading doctors even if establishment links are incomplete.
       }
     }
 
@@ -1446,18 +1487,8 @@ class HealthsyncService {
         })
         .where((doctor) => doctor.id.isNotEmpty)
         .where((doctor) => doctor.userIsActive)
-        .where((doctor) => doctor.establishments.isNotEmpty)
         .toList();
   }
-}
-
-String _slotKey(DateTime value) {
-  final y = value.year.toString().padLeft(4, '0');
-  final m = value.month.toString().padLeft(2, '0');
-  final d = value.day.toString().padLeft(2, '0');
-  final hh = value.hour.toString().padLeft(2, '0');
-  final mm = value.minute.toString().padLeft(2, '0');
-  return '$y-$m-$d $hh:$mm';
 }
 
 String _dateOnlyString(DateTime value) {
